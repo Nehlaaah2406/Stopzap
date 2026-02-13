@@ -30,16 +30,57 @@ const alarmSound = document.getElementById('alarm-sound');
 
 // --- Module 3: Map Initialization ---
 function initMap() {
-    // Initial view (London or user's last known)
-    map = L.map('map').setView([0, 0], 2);
+    // Default view, will be updated by geolocation
+    map = L.map('map').setView([0, 0], 13);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
+    // Start background tracking immediately for "lively" feel
+    startBackgroundTracking();
+
     // Load saved destination if it exists (Module 7)
     if (destination) {
         updateDestinationUI(destination);
+    }
+}
+
+function startBackgroundTracking() {
+    if (!navigator.geolocation) {
+        console.warn("Geolocation not supported.");
+        return;
+    }
+
+    // Single fix for initial map centering
+    navigator.geolocation.getCurrentPosition((pos) => {
+        const { latitude, longitude } = pos.coords;
+        map.setView([latitude, longitude], 15);
+        updateUserMarker(latitude, longitude);
+    }, (err) => {
+        console.warn("Initial location fix failed:", err);
+    });
+
+    // Continuous watch for "lively" tracking
+    navigator.geolocation.watchPosition(
+        (pos) => handleUpdate(pos),
+        (err) => handleError(err),
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+}
+
+function updateUserMarker(latitude, longitude) {
+    if (!userMarker) {
+        userMarker = L.circleMarker([latitude, longitude], {
+            radius: 8,
+            fillColor: "#6366f1",
+            color: "#fff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 1
+        }).addTo(map);
+    } else {
+        userMarker.setLatLng([latitude, longitude]);
     }
 }
 
@@ -167,29 +208,18 @@ function toggleTracking() {
         if (simulateToggle.checked) {
             startSimulation();
         } else {
-            startTracking();
+            activateAlarm();
         }
     }
 }
 
-function startTracking() {
-    if (!navigator.geolocation) {
-        alert("Geolocation not supported by your browser.");
-        return;
-    }
-
+function activateAlarm() {
     isTracking = true;
-    startBtn.textContent = "Stop Tracking";
+    startBtn.textContent = "Alarm Active - Click to Off";
     startBtn.classList.replace('btn-primary', 'btn-danger');
     trackingIndicator.classList.add('active');
     mapOverlay.classList.remove('hidden');
-    statusHint.textContent = "Tracking live...";
-
-    watchId = navigator.geolocation.watchPosition(
-        handleUpdate,
-        handleError,
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-    );
+    statusHint.textContent = "Alarm monitoring active...";
 }
 
 function startSimulation() {
@@ -228,16 +258,15 @@ function stopTracking() {
     if (isSimulating) {
         clearInterval(simInterval);
         isSimulating = false;
-    } else {
-        navigator.geolocation.clearWatch(watchId);
     }
+    // Note: We don't clear the watchId anymore because we want "lively" tracking 24/7
     startBtn.textContent = "Start Tracking";
     startBtn.classList.replace('btn-danger', 'btn-primary');
     trackingIndicator.classList.remove('active');
     mapOverlay.classList.add('hidden');
     alarmSound.pause();
     alarmSound.currentTime = 0;
-    statusHint.textContent = "Tracking stopped.";
+    statusHint.textContent = "Alarm disabled.";
     document.body.style.boxShadow = "none";
     window.alerted = false;
 }
@@ -247,21 +276,10 @@ function handleUpdate(position) {
     currCoordsEl.textContent = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
 
     // Update User Marker
-    if (!userMarker) {
-        userMarker = L.circleMarker([latitude, longitude], {
-            radius: 8,
-            fillColor: "#6366f1",
-            color: "#fff",
-            weight: 2,
-            opacity: 1,
-            fillOpacity: 1
-        }).addTo(map);
-    } else {
-        userMarker.setLatLng([latitude, longitude]);
-    }
+    updateUserMarker(latitude, longitude);
 
-    // Auto-center if it's the first fix
-    if (!map.getBounds().contains([latitude, longitude])) {
+    // Auto-center if it's the first fix or if alarm is active
+    if (isTracking && !map.getBounds().contains([latitude, longitude])) {
         map.panTo([latitude, longitude]);
     }
 
@@ -271,9 +289,12 @@ function handleUpdate(position) {
         distanceDisplay.textContent = Math.round(dist) + ' m';
 
         // --- Module 6: Stop Alert System ---
-        const alertRadius = parseInt(radiusInput.value) || 50;
-        if (dist <= alertRadius) {
-            triggerAlert();
+        // Trigger only if alarm monitoring is "isTracking"
+        if (isTracking) {
+            const alertRadius = parseInt(radiusInput.value) || 50;
+            if (dist <= alertRadius) {
+                triggerAlert();
+            }
         }
     }
 }
